@@ -317,8 +317,8 @@ We welcome contributions! Please see our contributing guidelines:
 5. Open a Pull Request
 
 ## 📱 Screenshots
-
-*[Screenshots will be added here]*
+<img width="1502" height="856" alt="Screenshot 2025-08-03 at 12 34 26 PM" src="https://github.com/user-attachments/assets/6df454b5-9dd2-402c-b341-469653531fe8" />
+<img width="1502" height="856" alt="Screenshot 2025-08-03 at 12 34 45 PM" src="https://github.com/user-attachments/assets/441cf0d3-8168-4d5a-9f19-9ee6a20c3a8f" />
 
 ## 🏆 Hackathon Impact
 
