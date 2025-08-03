@@ -9,6 +9,9 @@ import { toast } from "sonner"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { calculateSproutsForSubmission, getSproutTypeId } from "@/lib/sprouts"
 import { logger } from "@/lib/logger";
+import { useNFT } from "@/hooks/use-nft";
+import { balanceCheckService, BalanceCheckResult } from "@/lib/balance-check";
+import { InsufficientBalanceModal } from "@/components/insufficient-balance-modal";
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -37,6 +40,9 @@ export default function SubmitIdeaPage() {
   const router = useRouter()
   const isMobile = useIsMobile()
   const { gardenTheme } = useGardenTheme();
+  const { mintNFT, minting } = useNFT();
+  const [showInsufficientBalanceModal, setShowInsufficientBalanceModal] = useState(false);
+  const [balanceInfo, setBalanceInfo] = useState<BalanceCheckResult | null>(null);
   const getThemeHeaderGradient = () => {
     switch (gardenTheme) {
       case 'spring':
@@ -148,12 +154,13 @@ export default function SubmitIdeaPage() {
       visuals: f.visuals.filter((_, i) => i !== idx),
     }))
 
-  // Submission
-  const handleSubmit = async () => {
+  // Check balance before submitting
+  const checkBalanceAndSubmit = async () => {
     if (!walletAddress) {
       toast.error("Connect your wallet first")
       return
     }
+    
     // --- Validate all description sections ---
     if (!formData.title.trim() || !formData.problem.trim() || !formData.vision.trim() || !formData.features.trim() || !formData.tech.trim() || !formData.targetUsers.trim() || !formData.unique.trim()) {
       toast.error("Please fill out all idea detail sections")
@@ -164,6 +171,26 @@ export default function SubmitIdeaPage() {
       return
     }
 
+    try {
+      // Check balance first
+      const balanceResult = await balanceCheckService.checkBalance(walletAddress);
+      
+      if (!balanceResult.hasEnoughBalance) {
+        setBalanceInfo(balanceResult);
+        setShowInsufficientBalanceModal(true);
+        return;
+      }
+      
+      // If balance is sufficient, proceed with full submission
+      await handleSubmitWithNFT();
+    } catch (error) {
+      logger.error('Failed to check balance:', error);
+      toast.error('Failed to check balance. Please try again.');
+    }
+  };
+
+  // Submit with NFT minting
+  const handleSubmitWithNFT = async () => {
     setSubmitting(true)
     try {
       // 1) Count existing projects by this user to calculate sprouts
@@ -238,7 +265,25 @@ export default function SubmitIdeaPage() {
         )
       )
 
-      toast.success(`Your idea has been planted! 🌱 +${sproutsAmount} sprouts earned!`)
+      // 8) Mint NFT for the idea
+      try {
+        const minterName = formData.title || "Anonymous Gardener";
+        const tokenId = await mintNFT(
+          compiledDescription,
+          compiledDescription,
+          minterName
+        );
+        
+        if (tokenId) {
+          toast.success(`Your idea has been planted! 🌱 +${sproutsAmount} sprouts earned! NFT #${tokenId} minted! 🎨`)
+        } else {
+          toast.success(`Your idea has been planted! 🌱 +${sproutsAmount} sprouts earned!`)
+        }
+      } catch (nftError) {
+        logger.error('Failed to mint NFT:', nftError);
+        toast.success(`Your idea has been planted! 🌱 +${sproutsAmount} sprouts earned! (NFT minting failed)`)
+      }
+      
       router.push("/") // back to garden
     } catch (e) {
       logger.error(e)
@@ -246,6 +291,99 @@ export default function SubmitIdeaPage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  // Submit without NFT (Option 2)
+  const handleSubmitWithoutNFT = async () => {
+    setSubmitting(true)
+    try {
+      // 1) Count existing projects by this user to calculate sprouts
+      const { data: existingProjects, error: countErr } = await supabase
+        .from("projects")
+        .select("id")
+        .eq("owner_address", walletAddress)
+      
+      if (countErr) throw countErr
+      
+      const projectCount = existingProjects?.length || 0
+      const sproutsAmount = calculateSproutsForSubmission(projectCount)
+
+      // --- Compile description from sections ---
+      const compiledDescription = `## What problem does your idea solve?\n${formData.problem}\n\n## Vision\n${formData.vision}\n\n## Features\n${formData.features}\n\n## Tech\n${formData.tech}\n\n## Who is it for? (target users, impact)\n${formData.targetUsers}\n\n## What makes it unique?\n${formData.unique}`
+
+      // 2) Insert project
+      const { data: proj, error: projErr } = await supabase
+        .from("projects")
+        .insert({
+          owner_address: walletAddress,
+          title: formData.title,
+          description: compiledDescription,
+        })
+        .select("id")
+        .single()
+      if (projErr || !proj?.id) throw projErr ?? new Error("No project ID")
+
+      const pid = proj.id
+
+      // 3) Award sprouts for planting the idea
+      const plantIdeaTypeId = await getSproutTypeId('plant_idea')
+      const { error: sproutsErr } = await supabase
+        .from("sprouts")
+        .insert({
+          user_address: walletAddress,
+          sprout_type_id: plantIdeaTypeId,
+          amount: sproutsAmount,
+          related_id: pid,
+        })
+      
+      if (sproutsErr) {
+        logger.error("Failed to award sprouts:", sproutsErr)
+        // Don't throw here - we still want the project to be created
+      }
+
+      // 4) Link categories
+      await Promise.all(
+        formData.categoryIds.map((cid) =>
+          supabase.from("project_categories").insert({ project_id: pid, category_id: cid })
+        )
+      )
+
+      // 5) Link tech stacks
+      await Promise.all(
+        formData.techStackIds.map((tid) =>
+          supabase.from("project_tech_stacks").insert({ project_id: pid, tech_stack_id: tid })
+        )
+      )
+
+      // 6) Insert related links
+      await Promise.all(
+        formData.links.map(({ url, label }) =>
+          supabase.from("project_links").insert({ project_id: pid, url, label })
+        )
+      )
+
+      // 7) Insert visuals
+      await Promise.all(
+        formData.visuals.map(({ url, alt }) =>
+          supabase.from("project_visuals").insert({ project_id: pid, url, alt_text: alt })
+        )
+      )
+
+      toast.success(`Your idea has been planted! 🌱 +${sproutsAmount} sprouts earned! (NFT will be available later)`)
+      setShowInsufficientBalanceModal(false);
+      router.push("/") // back to garden
+    } catch (e) {
+      logger.error(e)
+      toast.error("Failed to submit idea")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Handle modal option 1 (get tokens and re-submit later)
+  const handleOption1 = async () => {
+    setShowInsufficientBalanceModal(false);
+    toast.info("Please get test tokens from the faucet and try submitting again later!");
   }
 
   return (
@@ -538,12 +676,12 @@ export default function SubmitIdeaPage() {
             {/* Submit */}
             <div className="flex flex-col gap-3 md:gap-4 pt-4 md:pt-6">
               <Button
-                onClick={handleSubmit}
+                onClick={checkBalanceAndSubmit}
                 className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm md:text-base py-2 md:py-3"
-                disabled={submitting}
+                disabled={submitting || minting}
               >
                 <Sparkles className="w-3 h-3 md:w-4 md:h-4 mr-1 md:mr-2" />
-                {submitting ? "Planting..." : "Plant Idea in Garden"}
+                {submitting || minting ? "Planting..." : "Plant Idea in Garden"}
               </Button>
               <Button variant="outline" className="border-emerald-200 text-emerald-700 text-sm md:text-base">
                 Save Draft
@@ -556,6 +694,17 @@ export default function SubmitIdeaPage() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Insufficient Balance Modal */}
+      {balanceInfo && (
+        <InsufficientBalanceModal
+          isOpen={showInsufficientBalanceModal}
+          onClose={() => setShowInsufficientBalanceModal(false)}
+          onOption1={handleOption1}
+          onOption2={handleSubmitWithoutNFT}
+          balanceInfo={balanceInfo}
+        />
+      )}
     </div>
   )
 }

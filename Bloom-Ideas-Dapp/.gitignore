@@ -22,6 +22,18 @@ yarn-error.log*
 # vercel
 .vercel
 
+# hardhat
+cache/
+artifacts/
+typechain-types/
+coverage/
+coverage.json
+
+# contract deployment files
+contracts/.env
+contracts/.env.local
+contracts/.env.production
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -36,7 +36,7 @@ export const config = getDefaultConfig({
   chains: [etherlinkTestnet, mainnet, sepolia, polygon],
   transports: {
     [etherlinkTestnet.id]: http('https://rpc.ankr.com/etherlink_testnet'),
-    [mainnet.id]: http(process.env.NEXT_PUBLIC_ALCHEMY_MAINNET_RPC || (() => { throw new Error('NEXT_PUBLIC_ALCHEMY_MAINNET_RPC is not set in .env.local'); })()),
+    [mainnet.id]: http(process.env.NEXT_PUBLIC_ALCHEMY_MAINNET_RPC || 'https://eth-mainnet.g.alchemy.com/v2/demo'),
     [sepolia.id]: http(),
     [polygon.id]: http(),
   },

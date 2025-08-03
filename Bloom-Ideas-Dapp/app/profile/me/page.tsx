@@ -33,6 +33,7 @@ import { useSprouts } from "@/hooks/use-sprouts"
 import { getReputationLevel } from "@/lib/sprouts"
 import { useGardenTheme } from '@/components/garden-theme-context';
 import { logger } from "@/lib/logger";
+import { NFTGallery } from '@/components/nft-gallery';
 
 // Types
 interface UserProfile {
@@ -650,6 +651,9 @@ export default function MyProfilePage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* NFT Gallery */}
+            <NFTGallery />
           </TabsContent>
 
           <TabsContent value="activity" className="space-y-6">
